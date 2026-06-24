@@ -264,7 +264,7 @@ struct DashboardView: View {
                                 .padding(.vertical, 8)
                             }
                             .buttonStyle(.borderedProminent)
-                            .tint(.red)
+                            .tint(.accentColor)
                             .disabled(disk.isMock)
                             
                             if !stateManager.ejectMessage.isEmpty {

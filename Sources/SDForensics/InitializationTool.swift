@@ -1,4 +1,7 @@
 import Foundation
+#if os(macOS)
+import AppKit
+#endif
 
 public enum WipeLevel: String, CaseIterable, Identifiable {
     case quick = "Quick Wipe"
@@ -8,14 +11,54 @@ public enum WipeLevel: String, CaseIterable, Identifiable {
     public var id: String { self.rawValue }
 }
 
-public enum CameraDirectoryPreset: String, CaseIterable, Identifiable {
-    case none = "None (Raw Data Block Stamping only)"
-    case sonyXAVC = "Sony XAVC-S (M4ROOT/CLIP)"
-    case canonEOS = "Canon EOS Standard (DCIM/100CANON)"
-    case redR3D = "RED Digital Cinema (DCIM/RED)"
-    case genericDCIM = "Generic Camera DCIM (DCIM)"
+public struct CameraPreset: Identifiable, Codable, Hashable {
+    public var id: UUID
+    public var name: String
+    public var directories: [String]
+    public var iconPath: String?
+
+    public init(id: UUID = UUID(), name: String, directories: [String], iconPath: String? = nil) {
+        self.id = id
+        self.name = name
+        self.directories = directories
+        self.iconPath = iconPath
+    }
+}
+
+extension CameraPreset {
+    public static let none = CameraPreset(id: UUID(uuidString: "00000000-0000-0000-0000-000000000000")!, name: "None (Raw Data Block Stamping only)", directories: [], iconPath: nil)
     
-    public var id: String { self.rawValue }
+    public static let builtIns: [CameraPreset] = [
+        CameraPreset(name: "Sony XAVC-S (M4ROOT/CLIP)", directories: [
+            "PRIVATE/M4ROOT/CLIP",
+            "PRIVATE/M4ROOT/SUB",
+            "PRIVATE/M4ROOT/GENERAL",
+            "PRIVATE/M4ROOT/THMBNL"
+        ]),
+        CameraPreset(name: "Canon EOS Standard (DCIM/100CANON)", directories: [
+            "DCIM/100CANON"
+        ]),
+        CameraPreset(name: "RED Digital Cinema (DCIM/RED)", directories: [
+            "DCIM/RED"
+        ]),
+        CameraPreset(name: "ARRI Alexa Standard (ARRI)", directories: [
+            "ARRI/CLIP",
+            "ARRI/MISC"
+        ]),
+        CameraPreset(name: "Blackmagic Design (DCIM/BMD)", directories: [
+            "DCIM/BMD"
+        ]),
+        CameraPreset(name: "Panasonic LUMIX (PRIVATE/AVCHD)", directories: [
+            "PRIVATE/AVCHD",
+            "PRIVATE/PANA_GRP"
+        ]),
+        CameraPreset(name: "GoPro HERO Standard (DCIM/100GOPRO)", directories: [
+            "DCIM/100GOPRO"
+        ]),
+        CameraPreset(name: "Generic Camera DCIM (DCIM)", directories: [
+            "DCIM"
+        ])
+    ]
 }
 
 public class InitializationTool {
@@ -31,8 +74,9 @@ public class InitializationTool {
         ownerID: String,
         previousCycles: UInt64 = 0,
         wipeLevel: WipeLevel = .quick,
-        directoryPreset: CameraDirectoryPreset = .none,
+        directories: [String] = [],
         mountPoint: String = "",
+        customImagePath: String? = nil,
         onStepProgress: @escaping (Int, String) -> Void = { _, _ in }
     ) -> Result<Void, Error> {
         print("[Module 3] Commencing safe initialization and custom marking process...")
@@ -114,45 +158,46 @@ public class InitializationTool {
         }
         
         // Step 5: Create camera directory structures if selected
-        if directoryPreset != .none && !mountPoint.isEmpty {
+        if !directories.isEmpty && !mountPoint.isEmpty {
             onStepProgress(5, "Provisioning camera directory templates...")
-            print("[Module 3] STEP 5: Provisioning directory preset: \(directoryPreset.rawValue)")
+            print("[Module 3] STEP 5: Provisioning directories: \(directories)")
             
             let fm = FileManager.default
-            var dirs = [String]()
-            
-            switch directoryPreset {
-            case .sonyXAVC:
-                dirs = [
-                    "\(mountPoint)/PRIVATE/M4ROOT/CLIP",
-                    "\(mountPoint)/PRIVATE/M4ROOT/SUB",
-                    "\(mountPoint)/PRIVATE/M4ROOT/GENERAL",
-                    "\(mountPoint)/PRIVATE/M4ROOT/THMBNL"
-                ]
-            case .canonEOS:
-                dirs = [
-                    "\(mountPoint)/DCIM/100CANON"
-                ]
-            case .redR3D:
-                dirs = [
-                    "\(mountPoint)/DCIM/RED"
-                ]
-            case .genericDCIM:
-                dirs = [
-                    "\(mountPoint)/DCIM"
-                ]
-            default:
-                break
-            }
-            
-            for dir in dirs {
+            for dir in directories {
+                let fullPath = "\(mountPoint)/\(dir)"
                 do {
-                    try fm.createDirectory(atPath: dir, withIntermediateDirectories: true, attributes: nil)
-                    print("[Module 3] Created directory: \(dir)")
+                    try fm.createDirectory(atPath: fullPath, withIntermediateDirectories: true, attributes: nil)
+                    print("[Module 3] Created directory: \(fullPath)")
                 } catch {
-                    print("[Module 3] Failed to create directory: \(dir), error: \(error.localizedDescription)")
+                    print("[Module 3] Failed to create directory: \(fullPath), error: \(error.localizedDescription)")
                 }
             }
+        }
+        
+        // Step 5.5: Copy custom reference image and apply volume Finder icon if provided
+        if let imgPath = customImagePath, !imgPath.isEmpty, !mountPoint.isEmpty {
+            print("[Module 3] Custom reference image path supplied: \(imgPath)")
+            let fm = FileManager.default
+            let sourceURL = URL(fileURLWithPath: imgPath)
+            let ext = sourceURL.pathExtension.isEmpty ? "jpg" : sourceURL.pathExtension
+            let destURL = URL(fileURLWithPath: "\(mountPoint)/OWNER_CARD.\(ext)")
+            
+            do {
+                if fm.fileExists(atPath: destURL.path) {
+                    try fm.removeItem(at: destURL)
+                }
+                try fm.copyItem(at: sourceURL, to: destURL)
+                print("[Module 3] Copied reference image to card root: \(destURL.lastPathComponent)")
+            } catch {
+                print("[Module 3] Warning: Failed to copy reference image: \(error.localizedDescription)")
+            }
+            
+            #if os(macOS)
+            if let image = NSImage(contentsOfFile: imgPath) {
+                let success = NSWorkspace.shared.setIcon(image, forFile: mountPoint, options: [])
+                print("[Module 3] Applied custom volume Finder icon: \(success ? "Success" : "Failed")")
+            }
+            #endif
         }
         
         onStepProgress(6, "Formatting and stamping completed successfully.")

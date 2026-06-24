@@ -10,6 +10,7 @@ struct MainView: View {
         case speed
         case audit
         case format
+        case compressor
         case simulator
     }
     
@@ -42,6 +43,11 @@ struct MainView: View {
                         Label("Format & Mark", systemImage: "lock.shield")
                     }
                     .buttonStyle(SidebarButtonStyle(isSelected: currentTab == .format))
+                    
+                    Button(action: { currentTab = .compressor }) {
+                        Label("Media Compressor", systemImage: "photo.on.rectangle")
+                    }
+                    .buttonStyle(SidebarButtonStyle(isSelected: currentTab == .compressor))
                     
                     Button(action: { currentTab = .simulator }) {
                         Label("Simulator", systemImage: "cpu")
@@ -92,6 +98,8 @@ struct MainView: View {
                     AuditReportView(stateManager: stateManager)
                 case .format:
                     FormatMarkView(stateManager: stateManager)
+                case .compressor:
+                    MediaCompressorView(stateManager: stateManager)
                 case .simulator:
                     VirtualSimulatorView(stateManager: stateManager)
                 }
@@ -114,8 +122,8 @@ struct SidebarButtonStyle: ButtonStyle {
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(isSelected ? Color.accentColor.opacity(0.15) : Color.clear)
-            .foregroundColor(isSelected ? .accentColor : .primary)
+            .background(isSelected ? Color.macAccent.opacity(0.15) : Color.clear)
+            .foregroundColor(isSelected ? .macAccent : .primary)
             .cornerRadius(6)
             .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
     }

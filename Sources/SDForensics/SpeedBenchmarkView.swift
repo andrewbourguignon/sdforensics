@@ -18,10 +18,26 @@ struct SpeedBenchmarkView: View {
                 Spacer()
                 
                 if !stateManager.isBenchmarking {
+                    HStack(spacing: 8) {
+                        Text("Test Size:")
+                            .font(.subheadline)
+                            .bold()
+                        Picker("Test Size", selection: $stateManager.testSizeMB) {
+                            Text("50 MB").tag(50)
+                            Text("100 MB").tag(100)
+                            Text("250 MB").tag(250)
+                            Text("500 MB").tag(500)
+                        }
+                        .pickerStyle(MenuPickerStyle())
+                        .frame(width: 100)
+                    }
+                    .padding(.trailing, 10)
+                    
                     Button(action: { runBenchmark() }) {
                         Label("Run Speed Test", systemImage: "play.fill")
                     }
                     .buttonStyle(.borderedProminent)
+                    .tint(.macAccent)
                     .disabled(stateManager.selectedDisk == nil)
                 }
             }
@@ -81,7 +97,7 @@ struct SpeedBenchmarkView: View {
                                 Text(result.speedClass)
                                     .font(.title2)
                                     .bold()
-                                    .foregroundColor(.accentColor)
+                                    .foregroundColor(.macAccent)
                                 Text("Suitable for 4K video recording, burst photography, and high-speed data log ingest.")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
@@ -162,7 +178,7 @@ struct SpeedBenchmarkView: View {
                 VStack(spacing: 20) {
                     Image(systemName: "gauge.medium")
                         .font(.system(size: 64))
-                        .foregroundColor(.accentColor)
+                        .foregroundColor(.macAccent)
                     Text("Ready to run benchmark.")
                         .font(.title3)
                         .bold()
@@ -180,11 +196,96 @@ struct SpeedBenchmarkView: View {
                 .background(Color(NSColor.controlBackgroundColor).opacity(0.15))
                 .cornerRadius(12)
             }
+            
+            // History Section (Visible when not actively benchmarking)
+            if !stateManager.isBenchmarking && !stateManager.benchmarkHistory.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text("Benchmark History Logs")
+                            .font(.headline)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Button("Clear History", action: { stateManager.clearBenchmarkHistory() })
+                            .buttonStyle(.borderless)
+                            .foregroundColor(.red)
+                    }
+                    
+                    ScrollView {
+                        LazyVStack(spacing: 8) {
+                            ForEach(stateManager.benchmarkHistory) { record in
+                                HStack(spacing: 12) {
+                                    Text(record.grade)
+                                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                                        .foregroundColor(.white)
+                                        .frame(width: 28, height: 28)
+                                        .background(gradeColor(for: record.grade))
+                                        .clipShape(Circle())
+                                    
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(record.deviceName)
+                                            .font(.subheadline)
+                                            .bold()
+                                        Text("\(record.speedClass) • Test Size: \(record.testSizeMB) MB")
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    
+                                    Spacer()
+                                    
+                                    VStack(alignment: .trailing, spacing: 2) {
+                                        Text("Read: \(String(format: "%.1f", record.sequentialReadMBps)) MB/s")
+                                            .font(.caption)
+                                            .bold()
+                                            .foregroundColor(.blue)
+                                        Text("Write: \(String(format: "%.1f", record.sequentialWriteMBps)) MB/s")
+                                            .font(.caption)
+                                            .bold()
+                                            .foregroundColor(.green)
+                                    }
+                                    
+                                    Text(dateFormatter.string(from: record.date))
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .foregroundColor(.secondary)
+                                }
+                                .padding(.vertical, 6)
+                                .padding(.horizontal, 10)
+                                .background(Color(NSColor.controlBackgroundColor).opacity(0.3))
+                                .cornerRadius(8)
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 150)
+                }
+                .padding(16)
+                .background(Color(NSColor.controlBackgroundColor).opacity(0.15))
+                .cornerRadius(12)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
+                )
+            }
         }
         .padding(30)
     }
     
     // Helpers
+    private let dateFormatter: DateFormatter = {
+        let df = DateFormatter()
+        df.dateStyle = .short
+        df.timeStyle = .short
+        return df
+    }()
+    
+    private func gradeColor(for grade: String) -> Color {
+        switch grade {
+        case "A+", "A": return .green
+        case "B": return .blue
+        case "C": return .yellow
+        case "D": return .orange
+        default: return .red
+        }
+    }
+    
     private func runBenchmark() {
         if stateManager.selectedDisk?.isMock == true {
             // Mock Benchmark loading flow
@@ -196,7 +297,26 @@ struct SpeedBenchmarkView: View {
                 if stateManager.benchmarkProgress >= 1.0 {
                     timer.invalidate()
                     stateManager.isBenchmarking = false
-                    stateManager.benchmarkResult = mockResult
+                    
+                    let result = mockResult
+                    stateManager.benchmarkResult = result
+                    
+                    // Create mock record
+                    let record = BenchmarkRecord(
+                        id: UUID(),
+                        date: Date(),
+                        deviceName: stateManager.selectedDisk?.name ?? "Mock Disk",
+                        testSizeMB: stateManager.testSizeMB,
+                        sequentialReadMBps: result.sequentialReadMBps,
+                        sequentialWriteMBps: result.sequentialWriteMBps,
+                        randomRead4KMBps: result.randomRead4KMBps,
+                        speedClass: result.speedClass,
+                        grade: result.grade,
+                        readSamples: result.readSamples,
+                        writeSamples: result.writeSamples
+                    )
+                    stateManager.benchmarkHistory.insert(record, at: 0)
+                    stateManager.saveBenchmarkHistory()
                 }
             }
         } else {
@@ -206,7 +326,7 @@ struct SpeedBenchmarkView: View {
     
     private func getResult() -> BenchmarkResult? {
         if stateManager.selectedDisk?.isMock == true {
-            return stateManager.benchmarkResult ?? mockResult
+            return stateManager.benchmarkResult
         }
         return stateManager.benchmarkResult
     }

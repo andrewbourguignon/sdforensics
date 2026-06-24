@@ -77,7 +77,7 @@ struct AuditReportView: View {
                                     .font(.subheadline.bold())
                             }
                             .buttonStyle(.borderedProminent)
-                            .tint(.orange)
+                            .tint(.macAccent)
                         }
                     }
                     .padding(14)
@@ -232,6 +232,105 @@ struct AuditReportView: View {
                             .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
                     )
                 }
+                
+                if stateManager.selectedDisk != nil {
+                    // Carver Panel
+                    VStack(alignment: .leading, spacing: 16) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Forensic File Carver")
+                                    .font(.title3)
+                                    .bold()
+                                Text("Scan raw sectors to locate and recover deleted file headers (JPEG, PNG, MP4).")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            
+                            if stateManager.isCarving {
+                                Button(action: { stateManager.stopFileCarving() }) {
+                                    Text("Cancel")
+                                }
+                                .buttonStyle(.bordered)
+                            } else {
+                                Button(action: { stateManager.startFileCarving(forcePhysical: false) }) {
+                                    Label("Scan for Deleted Files", systemImage: "arrow.down.doc.fill")
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .tint(.macAccent)
+                            }
+                        }
+                        
+                        if stateManager.isCarving {
+                            VStack(alignment: .leading, spacing: 6) {
+                                ProgressView(value: stateManager.carvingProgress)
+                                    .progressViewStyle(LinearProgressViewStyle(tint: .macAccent))
+                                Text(stateManager.carvingStatusMessage)
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding()
+                            .background(Color(NSColor.controlBackgroundColor).opacity(0.2))
+                            .cornerRadius(8)
+                        } else if !stateManager.carvingStatusMessage.isEmpty && stateManager.carvedFiles.isEmpty {
+                            Text(stateManager.carvingStatusMessage)
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                                .padding()
+                                .frame(maxWidth: .infinity, alignment: .center)
+                        }
+                        
+                        if !stateManager.carvedFiles.isEmpty {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text("Recovered Files (\(stateManager.carvedFiles.count))")
+                                    .font(.headline)
+                                    .foregroundColor(.secondary)
+                                
+                                ScrollView {
+                                    LazyVStack(spacing: 8) {
+                                        ForEach(stateManager.carvedFiles) { file in
+                                            HStack {
+                                                Image(systemName: file.extension == "mp4" ? "video.fill" : "photo.fill")
+                                                    .font(.title2)
+                                                    .foregroundColor(.macAccent)
+                                                    .frame(width: 32)
+                                                
+                                                VStack(alignment: .leading, spacing: 2) {
+                                                    Text("\(file.type) (.\(file.extension))")
+                                                        .font(.subheadline)
+                                                        .bold()
+                                                    Text("Start Sector: \(file.startSector) • Size: \(file.sizeFormatted)")
+                                                        .font(.caption2)
+                                                        .foregroundColor(.secondary)
+                                                }
+                                                
+                                                Spacer()
+                                                
+                                                Button(action: { stateManager.exportCarvedFile(file) }) {
+                                                    Label("Export", systemImage: "square.and.arrow.up")
+                                                }
+                                                .buttonStyle(.bordered)
+                                                .controlSize(.small)
+                                            }
+                                            .padding(.vertical, 8)
+                                            .padding(.horizontal, 12)
+                                            .background(Color(NSColor.controlBackgroundColor).opacity(0.3))
+                                            .cornerRadius(8)
+                                        }
+                                    }
+                                }
+                                .frame(maxHeight: 200)
+                            }
+                        }
+                    }
+                    .padding(20)
+                    .background(Color(NSColor.controlBackgroundColor).opacity(0.2))
+                    .cornerRadius(12)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
+                    )
+                }
             }
             .padding(30)
         }
@@ -347,7 +446,7 @@ struct TimelineStepperView: View {
                 HStack(alignment: .top, spacing: 16) {
                     VStack(spacing: 0) {
                         Circle()
-                            .fill(LinearGradient(colors: [.accentColor, .blue], startPoint: .top, endPoint: .bottom))
+                            .fill(LinearGradient(colors: [.macAccent, .blue], startPoint: .top, endPoint: .bottom))
                             .frame(width: 10, height: 10)
                         
                         if idx < events.count - 1 {
@@ -364,8 +463,8 @@ struct TimelineStepperView: View {
                                 .bold()
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
-                                .background(Color.accentColor.opacity(0.15))
-                                .foregroundColor(.accentColor)
+                                .background(Color.macAccent.opacity(0.15))
+                                .foregroundColor(.macAccent)
                                 .cornerRadius(4)
                             
                             Text(event.timestampString)

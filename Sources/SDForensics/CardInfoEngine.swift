@@ -107,7 +107,7 @@ public enum CameraStructure: String {
 }
 
 // MARK: - Speed Benchmark Models
-public struct BenchmarkResult {
+public struct BenchmarkResult: Codable {
     public let sequentialReadMBps: Double
     public let sequentialWriteMBps: Double
     public let randomRead4KMBps: Double
@@ -116,6 +116,21 @@ public struct BenchmarkResult {
     public let readSamples: [Double]     // MB/s over time for chart
     public let writeSamples: [Double]
 }
+
+public struct BenchmarkRecord: Codable, Identifiable, Hashable {
+    public let id: UUID
+    public let date: Date
+    public let deviceName: String
+    public let testSizeMB: Int
+    public let sequentialReadMBps: Double
+    public let sequentialWriteMBps: Double
+    public let randomRead4KMBps: Double
+    public let speedClass: String
+    public let grade: String
+    public let readSamples: [Double]
+    public let writeSamples: [Double]
+}
+
 
 // MARK: - Card Info Engine
 public class CardInfoEngine {
@@ -406,7 +421,7 @@ public class CardInfoEngine {
     }
     
     /// Runs sequential read benchmark on a mounted volume.
-    public static func runBenchmark(mountPoint: String) -> BenchmarkResult {
+    public static func runBenchmark(mountPoint: String, testSizeMB: Int) -> BenchmarkResult {
         var readSamples = [Double]()
         var writeSamples = [Double]()
         
@@ -419,7 +434,7 @@ public class CardInfoEngine {
             if isDir.boolValue { return nil }
             let attrs = try? fm.attributesOfItem(atPath: path)
             let size = attrs?[.size] as? UInt64 ?? 0
-            return size > 10_000_000 ? path : nil // Files > 10MB
+            return size > 2_000_000 ? path : nil // Files > 2MB
         } ?? []
         
         // Find a large file for read test (prefer video clips)
@@ -428,15 +443,14 @@ public class CardInfoEngine {
         
         var seqReadMBps: Double = 0
         if let testFile = readTestFile {
-            // Read 64MB chunks, measure throughput
-            let chunkSize = 64 * 1024 * 1024 // 64MB
+            let maxBytes: UInt64 = UInt64(testSizeMB) * 1024 * 1024
+            let chunkSize = max(1024 * 1024, Int(maxBytes / 8))
             let fd = open(testFile, O_RDONLY)
             if fd != -1 {
                 // Set F_NOCACHE for accurate measurement
                 fcntl(fd, F_NOCACHE, 1)
                 
                 var totalBytesRead: UInt64 = 0
-                let maxBytes: UInt64 = 256 * 1024 * 1024 // Read up to 256MB
                 var buffer = [UInt8](repeating: 0, count: chunkSize)
                 
                 let startTime = DispatchTime.now()
@@ -461,8 +475,8 @@ public class CardInfoEngine {
         // Sequential Write: write a temp file
         var seqWriteMBps: Double = 0
         let tempPath = "\(mountPoint)/.sdforensics_benchmark_tmp"
-        let writeChunkSize = 16 * 1024 * 1024 // 16MB
-        let writeTotal: UInt64 = 128 * 1024 * 1024 // Write 128MB
+        let writeTotal: UInt64 = UInt64(testSizeMB) * 1024 * 1024
+        let writeChunkSize = max(1024 * 1024, Int(writeTotal / 8))
         let writeBuffer = [UInt8](repeating: 0xAA, count: writeChunkSize)
         
         let wfd = open(tempPath, O_WRONLY | O_CREAT | O_TRUNC, 0o644)
@@ -536,7 +550,7 @@ public class CardInfoEngine {
     private static func findLargeFiles(mountPoint: String) -> [String] {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/find")
-        task.arguments = [mountPoint, "-type", "f", "-size", "+50M", "-not", "-path", "*/.*"]
+        task.arguments = [mountPoint, "-type", "f", "-size", "+10M", "-not", "-path", "*/.*"]
         let pipe = Pipe()
         task.standardOutput = pipe
         task.standardError = Pipe()

@@ -54,7 +54,7 @@ struct VirtualSimulatorView: View {
                         }
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(.orange)
+                    .tint(.accentColor)
                     .disabled(isCreating)
                 }
                 .padding(20)
@@ -91,9 +91,30 @@ struct VirtualSimulatorView: View {
         let path = "\(folderPath)/\(fileName)"
         
         DispatchQueue.global(qos: .userInitiated).async {
-            // Write 10MB zero file
+            // Write 10MB file seeded with forensic signatures
             let sizeBytes = 10 * 1024 * 1024
-            let zeroData = Data(repeating: 0, count: sizeBytes)
+            var zeroData = Data(repeating: 0, count: sizeBytes)
+            
+            // Seed some mock JPEG at Sector 500 (offset 256,000 bytes)
+            let jpegOffset = 500 * 512
+            let jpegHeader = Data([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46])
+            let jpegFooter = Data([0xFF, 0xD9])
+            zeroData.replaceSubrange(jpegOffset..<(jpegOffset + jpegHeader.count), with: jpegHeader)
+            zeroData.replaceSubrange((jpegOffset + 2000)..<(jpegOffset + 2000 + jpegFooter.count), with: jpegFooter)
+            
+            // Seed some mock PNG at Sector 1500 (offset 768,000 bytes)
+            let pngOffset = 1500 * 512
+            let pngHeader = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+            let pngFooter = Data([0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82])
+            zeroData.replaceSubrange(pngOffset..<(pngOffset + pngHeader.count), with: pngHeader)
+            zeroData.replaceSubrange((pngOffset + 4000)..<(pngOffset + 4000 + pngFooter.count), with: pngFooter)
+            
+            // Seed some mock MP4 at Sector 3000 (offset 1,536,000 bytes)
+            let mp4Offset = 3000 * 512
+            let mp4Header = Data([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x6D, 0x70, 0x34, 0x32])
+            let mp4Moov = Data([0x6D, 0x6F, 0x6F, 0x76])
+            zeroData.replaceSubrange(mp4Offset..<(mp4Offset + mp4Header.count), with: mp4Header)
+            zeroData.replaceSubrange((mp4Offset + 6000)..<(mp4Offset + 6000 + mp4Moov.count), with: mp4Moov)
             
             do {
                 try zeroData.write(to: URL(fileURLWithPath: path))

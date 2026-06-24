@@ -1,19 +1,30 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct FormatMarkView: View {
     @ObservedObject var stateManager: AppStateManager
     @State private var forcePhysical = false
     @State private var showWarningSheet = false
     
+    // Custom Preset Creation State
+    @State private var showCreateSheet = false
+    @State private var newPresetName = ""
+    @State private var newPresetFolders = ""
+    @State private var newPresetIconPath: String? = nil
+    
+    // Custom Preset Rename State
+    @State private var showRenameSheet = false
+    @State private var renameName = ""
+    
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 25) {
                 // Header
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Initialize & Stamping Control")
+                    Text("Prepare & Personalize Card")
                         .font(.title)
                         .bold()
-                    Text("Safely format your SD card and embed persistent, metadata-tracking signature markers.")
+                    Text("Configure folder presets, custom image branding, and safety erase settings for your SD card.")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
@@ -22,7 +33,7 @@ struct FormatMarkView: View {
                     HStack(alignment: .top, spacing: 24) {
                         // Left: Form Inputs and Selection Controls
                         VStack(alignment: .leading, spacing: 18) {
-                            Text("Formatting Options")
+                            Text("Formatting & Setup Options")
                                 .font(.headline)
                                 .foregroundColor(.secondary)
                             
@@ -78,19 +89,139 @@ struct FormatMarkView: View {
                                 .pickerStyle(SegmentedPickerStyle())
                             }
                             
-                            // Directory Preset Picker
+                            // Camera Directory Presets Picker & CRUD Actions
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("Camera Directory Layout Preset")
                                     .font(.subheadline)
                                     .fontWeight(.bold)
                                     .foregroundColor(.secondary)
                                 
-                                Picker("Directory Preset", selection: $stateManager.directoryPreset) {
-                                    ForEach(CameraDirectoryPreset.allCases) { preset in
-                                        Text(preset.rawValue).tag(preset)
+                                HStack(spacing: 8) {
+                                    Picker("Directory Preset", selection: $stateManager.selectedPreset) {
+                                        ForEach(stateManager.cameraPresets) { preset in
+                                            Text(preset.name).tag(preset)
+                                        }
+                                    }
+                                    .pickerStyle(MenuPickerStyle())
+                                    .frame(maxWidth: .infinity)
+                                    
+                                    // New Custom Preset
+                                    Button(action: {
+                                        newPresetName = ""
+                                        newPresetFolders = ""
+                                        newPresetIconPath = nil
+                                        showCreateSheet = true
+                                    }) {
+                                        Image(systemName: "plus.circle.fill")
+                                            .foregroundColor(.macAccent)
+                                            .font(.title3)
+                                    }
+                                    .buttonStyle(PlainButtonStyle())
+                                    .help("Create Custom Preset")
+                                    
+                                    // Rename Custom Preset (only for non-built-in items)
+                                    if isSelectedPresetCustom() {
+                                        Button(action: {
+                                            renameName = stateManager.selectedPreset.name
+                                            showRenameSheet = true
+                                        }) {
+                                            Image(systemName: "pencil.circle.fill")
+                                                .foregroundColor(.macAccent)
+                                                .font(.title3)
+                                        }
+                                        .buttonStyle(PlainButtonStyle())
+                                        .help("Rename Selected Preset")
+                                        
+                                        // Delete Custom Preset
+                                        Button(action: {
+                                            stateManager.deleteCustomPreset(id: stateManager.selectedPreset.id)
+                                        }) {
+                                            Image(systemName: "trash.circle.fill")
+                                                .foregroundColor(.red)
+                                                .font(.title3)
+                                        }
+                                        .buttonStyle(PlainButtonStyle())
+                                        .help("Delete Selected Preset")
                                     }
                                 }
-                                .pickerStyle(MenuPickerStyle())
+                                
+                                // Show selected preset directory list summary
+                                if !stateManager.selectedPreset.directories.isEmpty {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("Folder list to provision:")
+                                            .font(.caption2)
+                                            .bold()
+                                            .foregroundColor(.secondary)
+                                        ForEach(stateManager.selectedPreset.directories, id: \.self) { folder in
+                                            Text(" 📁 \(folder)")
+                                                .font(.system(size: 10, design: .monospaced))
+                                                .foregroundColor(.secondary)
+                                        }
+                                        
+                                        if let icon = stateManager.selectedPreset.iconPath {
+                                            HStack(spacing: 4) {
+                                                Image(systemName: "photo.fill")
+                                                    .font(.system(size: 9))
+                                                Text("Default Finder Icon: \(URL(fileURLWithPath: icon).lastPathComponent)")
+                                                    .font(.system(size: 9))
+                                            }
+                                            .foregroundColor(.macAccent)
+                                            .padding(.top, 2)
+                                        }
+                                    }
+                                    .padding(8)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(Color(NSColor.controlBackgroundColor).opacity(0.15))
+                                    .cornerRadius(6)
+                                }
+                            }
+                            
+                            // Custom Reference Image selector
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Custom Reference / Preset Image")
+                                    .font(.subheadline)
+                                    .fontWeight(.bold)
+                                    .foregroundColor(.secondary)
+                                
+                                HStack {
+                                    if let imgPath = stateManager.customPresetImagePath {
+                                        Image(systemName: "photo.fill")
+                                            .foregroundColor(.macAccent)
+                                        Text(URL(fileURLWithPath: imgPath).lastPathComponent)
+                                            .font(.caption)
+                                            .lineLimit(1)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                        
+                                        Button(action: { stateManager.customPresetImagePath = nil }) {
+                                            Image(systemName: "xmark.circle.fill")
+                                                .foregroundColor(.secondary)
+                                        }
+                                        .buttonStyle(PlainButtonStyle())
+                                    } else {
+                                        Text("No image selected")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                        
+                                        Button(action: {
+                                            let panel = NSOpenPanel()
+                                            panel.allowedContentTypes = [.image]
+                                            panel.allowsMultipleSelection = false
+                                            panel.canChooseDirectories = false
+                                            panel.canChooseFiles = true
+                                            panel.title = "Select Custom Preset Image"
+                                            if panel.runModal() == .OK, let url = panel.url {
+                                                stateManager.customPresetImagePath = url.path
+                                            }
+                                        }) {
+                                            Text("Browse...")
+                                        }
+                                        .buttonStyle(.bordered)
+                                    }
+                                }
+                                .padding(8)
+                                .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
+                                .cornerRadius(6)
                             }
                             
                             // Safety physical write override
@@ -117,7 +248,7 @@ struct FormatMarkView: View {
                                 .padding(.vertical, 8)
                             }
                             .buttonStyle(.borderedProminent)
-                            .tint(disk.isMock ? .orange : .red)
+                            .tint(.macAccent)
                             .disabled(stateManager.isFormatting)
                             
                         }
@@ -186,6 +317,132 @@ struct FormatMarkView: View {
                 secondaryButton: .cancel(Text("Cancel"))
             )
         }
+        // Sheet: Create Custom Preset
+        .sheet(isPresented: $showCreateSheet) {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Create Custom Camera Preset")
+                    .font(.headline)
+                
+                VStack(spacing: 10) {
+                    HStack {
+                        Text("Name:")
+                            .frame(width: 80, alignment: .leading)
+                        TextField("e.g. My Sony Setup", text: $newPresetName)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                    }
+                    
+                    HStack {
+                        Text("Folders:")
+                            .frame(width: 80, alignment: .leading)
+                        TextField("e.g. DCIM/SHOT_A, DCIM/SHOT_B", text: $newPresetFolders)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                    }
+                    Text("Enter relative folder paths separated by commas.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                    
+                    HStack {
+                        Text("Finder Icon:")
+                            .frame(width: 80, alignment: .leading)
+                        
+                        HStack {
+                            if let icon = newPresetIconPath {
+                                Image(systemName: "photo.fill")
+                                    .foregroundColor(.macAccent)
+                                Text(URL(fileURLWithPath: icon).lastPathComponent)
+                                    .font(.caption)
+                                    .lineLimit(1)
+                                Spacer()
+                                Button(action: { newPresetIconPath = nil }) {
+                                    Image(systemName: "xmark.circle.fill")
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                            } else {
+                                Text("Optional Preset Icon File")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                                Button(action: {
+                                    let panel = NSOpenPanel()
+                                    panel.allowedContentTypes = [.image]
+                                    panel.allowsMultipleSelection = false
+                                    panel.canChooseDirectories = false
+                                    panel.canChooseFiles = true
+                                    panel.title = "Select Preset Icon File"
+                                    if panel.runModal() == .OK, let url = panel.url {
+                                        newPresetIconPath = url.path
+                                    }
+                                }) {
+                                    Text("Browse...")
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        }
+                        .padding(6)
+                        .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
+                        .cornerRadius(6)
+                    }
+                }
+                
+                HStack {
+                    Spacer()
+                    Button("Cancel") {
+                        showCreateSheet = false
+                    }
+                    .buttonStyle(.bordered)
+                    
+                    Button("Create") {
+                        let dirsList = newPresetFolders
+                            .components(separatedBy: ",")
+                            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                            .filter { !$0.isEmpty }
+                        
+                        stateManager.addCustomPreset(name: newPresetName, directories: dirsList, iconPath: newPresetIconPath)
+                        showCreateSheet = false
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.macAccent)
+                    .disabled(newPresetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .padding(20)
+            .frame(width: 420)
+        }
+        // Sheet: Rename Selected Preset
+        .sheet(isPresented: $showRenameSheet) {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Rename Preset")
+                    .font(.headline)
+                
+                TextField("New Name", text: $renameName)
+                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                
+                HStack {
+                    Spacer()
+                    Button("Cancel") {
+                        showRenameSheet = false
+                    }
+                    .buttonStyle(.bordered)
+                    
+                    Button("Save") {
+                        stateManager.renamePreset(id: stateManager.selectedPreset.id, newName: renameName)
+                        showRenameSheet = false
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.macAccent)
+                    .disabled(renameName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .padding(20)
+            .frame(width: 300)
+        }
+    }
+    
+    // Helpers
+    private func isSelectedPresetCustom() -> Bool {
+        let selected = stateManager.selectedPreset
+        return !CameraPreset.builtIns.contains(where: { $0.id == selected.id }) && selected.id != CameraPreset.none.id
     }
     
     // Status Icon Helper
@@ -202,7 +459,7 @@ struct FormatMarkView: View {
                 .frame(width: 14, height: 14)
         case .completed:
             Image(systemName: "checkmark.circle.fill")
-                .foregroundColor(.green)
+                .foregroundColor(.macAccent)
                 .font(.system(size: 14))
         case .failed:
             Image(systemName: "xmark.circle.fill")
@@ -214,7 +471,7 @@ struct FormatMarkView: View {
     private func stepColor(for status: FormatStep.StepStatus) -> Color {
         switch status {
         case .pending: return .secondary
-        case .active: return .accentColor
+        case .active: return .macAccent
         case .completed: return .primary
         case .failed: return .red
         }
@@ -240,7 +497,7 @@ struct SDCardCanvas: View {
                     RoundedRectangle(cornerRadius: 16)
                         .stroke(
                             isFormatting ?
-                            LinearGradient(colors: [.accentColor, .purple, .accentColor], startPoint: .topLeading, endPoint: .bottomTrailing) :
+                            LinearGradient(colors: [.macAccent, .purple, .macAccent], startPoint: .topLeading, endPoint: .bottomTrailing) :
                             LinearGradient(colors: [Color.secondary.opacity(0.3), Color.clear], startPoint: .topLeading, endPoint: .bottomTrailing),
                             lineWidth: isFormatting ? 3 : 1
                         )
@@ -350,3 +607,4 @@ struct SDCardCanvas: View {
         }
     }
 }
+
