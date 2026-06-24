@@ -112,6 +112,95 @@ struct StorageAnalysisView: View {
                             .cornerRadius(12)
                         }
                         
+                        // RAW Shutter Count Scanner Panel
+                        VStack(alignment: .leading, spacing: 16) {
+                            HStack {
+                                Image(systemName: "camera.shutter.button")
+                                    .foregroundColor(.purple)
+                                Text("RAW Shutter Count Scanner")
+                                    .font(.headline)
+                                Spacer()
+                            }
+                            
+                            if analysis.rawImages.isEmpty {
+                                HStack(spacing: 12) {
+                                    Image(systemName: "info.circle")
+                                        .foregroundColor(.secondary)
+                                    Text("No RAW images (.ARW, .NEF, .CR2, .CR3, .RAF) detected on this volume. Shoot a RAW image to check the shutter count.")
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                }
+                                .padding(16)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color.secondary.opacity(0.08))
+                                .cornerRadius(8)
+                            } else {
+                                VStack(spacing: 0) {
+                                    // Column Headers
+                                    HStack(spacing: 12) {
+                                        Text("Filename")
+                                            .fontWeight(.bold)
+                                            .frame(width: 140, alignment: .leading)
+                                        Text("Camera Model")
+                                            .fontWeight(.bold)
+                                            .frame(width: 180, alignment: .leading)
+                                        Text("Shutter Count")
+                                            .fontWeight(.bold)
+                                            .frame(width: 130, alignment: .leading)
+                                        Text("Date Taken")
+                                            .fontWeight(.bold)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                    }
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .padding(.bottom, 10)
+                                    
+                                    Divider()
+                                        .padding(.bottom, 8)
+                                    
+                                    ForEach(analysis.rawImages) { entry in
+                                        HStack(spacing: 12) {
+                                            Text(entry.filename)
+                                                .font(.system(.body, design: .monospaced))
+                                                .fontWeight(.semibold)
+                                                .frame(width: 140, alignment: .leading)
+                                            
+                                            Text(entry.cameraModel)
+                                                .frame(width: 180, alignment: .leading)
+                                                .lineLimit(1)
+                                            
+                                            HStack(spacing: 4) {
+                                                if let count = entry.shutterCount {
+                                                    Image(systemName: "number.circle.fill")
+                                                        .foregroundColor(.green)
+                                                    Text("\(count)")
+                                                        .fontWeight(.bold)
+                                                } else {
+                                                    Image(systemName: "questionmark.circle")
+                                                        .foregroundColor(.secondary)
+                                                    Text("N/A (Requires USB)")
+                                                        .font(.caption)
+                                                        .foregroundColor(.secondary)
+                                                }
+                                            }
+                                            .frame(width: 130, alignment: .leading)
+                                            
+                                            Text(formatDate(entry.dateTaken))
+                                                .foregroundColor(.secondary)
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                        }
+                                        .font(.subheadline)
+                                        .padding(.vertical, 6)
+                                        
+                                        Divider()
+                                    }
+                                }
+                            }
+                        }
+                        .padding(20)
+                        .background(Color(NSColor.controlBackgroundColor).opacity(0.3))
+                        .cornerRadius(12)
+
                         // Media Clip Explorer Panel
                         VStack(alignment: .leading, spacing: 16) {
                             HStack {
@@ -222,6 +311,13 @@ struct StorageAnalysisView: View {
         ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
     }
     
+    private func formatDate(_ date: Date?) -> String {
+        guard let d = date else { return "Unknown" }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return formatter.string(from: d)
+    }
+
     private var emptyAnalysis: StorageAnalysis {
         StorageAnalysis(
             totalFiles: 0,
@@ -232,7 +328,8 @@ struct StorageAnalysisView: View {
             largestFiles: [],
             cameraStructure: .unknown,
             clipEntries: [],
-            recordingDates: []
+            recordingDates: [],
+            rawImages: []
         )
     }
     
@@ -264,23 +361,34 @@ struct StorageAnalysisView: View {
         let fileTypes = [
             FileTypeGroup(extension_: "MP4", count: 210, totalSizeBytes: totalSize),
             FileTypeGroup(extension_: "XML", count: 210, totalSizeBytes: 210 * 3072),
-            FileTypeGroup(extension_: "BIN", count: 4, totalSizeBytes: 4 * 1024 * 1024)
+            FileTypeGroup(extension_: "BIN", count: 4, totalSizeBytes: 4 * 1024 * 1024),
+            FileTypeGroup(extension_: "ARW", count: 2, totalSizeBytes: 85_300_000),
+            FileTypeGroup(extension_: "NEF", count: 1, totalSizeBytes: 48_100_000),
+            FileTypeGroup(extension_: "CR3", count: 1, totalSizeBytes: 31_200_000)
         ]
         
         let largest = clips.sorted { $0.sizeBytes > $1.sizeBytes }.prefix(10).map {
             FileEntry(name: $0.filename, path: $0.path, sizeBytes: $0.sizeBytes, modifiedDate: $0.creationDate)
         }
         
+        let mockRaws = [
+            RawImageEntry(filename: "DSC01245.ARW", path: "/Volumes/MOCK_CARD/DCIM/100MSDCF/DSC01245.ARW", sizeBytes: 42_500_000, cameraModel: "Sony ILCE-7M4", shutterCount: 12450, dateTaken: baseDate),
+            RawImageEntry(filename: "DSC01246.ARW", path: "/Volumes/MOCK_CARD/DCIM/100MSDCF/DSC01246.ARW", sizeBytes: 42_800_000, cameraModel: "Sony ILCE-7M4", shutterCount: 12451, dateTaken: baseDate.addingTimeInterval(30)),
+            RawImageEntry(filename: "DSC_8941.NEF", path: "/Volumes/MOCK_CARD/DCIM/101NIKON/DSC_8941.NEF", sizeBytes: 48_100_000, cameraModel: "Nikon D850", shutterCount: 48912, dateTaken: baseDate.addingTimeInterval(3600)),
+            RawImageEntry(filename: "IMG_0411.CR3", path: "/Volumes/MOCK_CARD/DCIM/100CANON/IMG_0411.CR3", sizeBytes: 31_200_000, cameraModel: "Canon EOS R5", shutterCount: nil, dateTaken: baseDate.addingTimeInterval(7200))
+        ]
+        
         return StorageAnalysis(
-            totalFiles: 424,
-            totalSizeBytes: totalSize,
+            totalFiles: 428,
+            totalSizeBytes: totalSize + 85_300_000 + 48_100_000 + 31_200_000,
             freeSpaceBytes: 24_000_000_000,
             capacityBytes: 256_000_000_000,
             fileTypeBreakdown: fileTypes,
             largestFiles: largest,
             cameraStructure: .sonyXAVC,
             clipEntries: clips,
-            recordingDates: clips.compactMap { $0.creationDate }
+            recordingDates: clips.compactMap { $0.creationDate },
+            rawImages: mockRaws
         )
     }
 }

@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 
 // MARK: - Card Identity Model
 public struct CardIdentity {
@@ -26,6 +27,20 @@ public struct CardIdentity {
 }
 
 // MARK: - Storage Analysis Models
+public struct RawImageEntry: Identifiable, Hashable {
+    public let id = UUID()
+    public let filename: String
+    public let path: String
+    public let sizeBytes: UInt64
+    public var cameraModel: String
+    public var shutterCount: Int? // nil if unsupported
+    public let dateTaken: Date?
+    
+    public var sizeFormatted: String {
+        ByteCountFormatter.string(fromByteCount: Int64(sizeBytes), countStyle: .file)
+    }
+}
+
 public struct StorageAnalysis {
     public let totalFiles: Int
     public let totalSizeBytes: UInt64
@@ -36,6 +51,7 @@ public struct StorageAnalysis {
     public let cameraStructure: CameraStructure?
     public let clipEntries: [ClipEntry]
     public let recordingDates: [Date]
+    public let rawImages: [RawImageEntry]
 }
 
 public struct FileTypeGroup: Identifiable {
@@ -262,6 +278,18 @@ public class CardInfoEngine {
             clipEntries.append(clip)
         }
         
+        // Gather RAW images
+        let rawFiles = allFiles.filter { entry in
+            let ext = URL(fileURLWithPath: entry.path).pathExtension.uppercased()
+            return ["ARW", "NEF", "CR2", "CR3", "RAF", "DNG"].contains(ext)
+        }.sorted { ($0.name) < ($1.name) }
+        
+        var rawImages = [RawImageEntry]()
+        for file in rawFiles {
+            let entry = loadRawImageMetadata(filePath: file.path, sizeBytes: file.sizeBytes)
+            rawImages.append(entry)
+        }
+        
         // Extract unique recording dates
         let recordingDates = clipEntries.compactMap { $0.creationDate }.sorted()
         
@@ -276,7 +304,8 @@ public class CardInfoEngine {
             largestFiles: Array(largestFiles),
             cameraStructure: cameraStructure,
             clipEntries: clipEntries,
-            recordingDates: recordingDates
+            recordingDates: recordingDates,
+            rawImages: rawImages
         )
     }
     
@@ -559,5 +588,200 @@ public class CardInfoEngine {
         } catch {
             return .failure(error)
         }
+    }
+    
+    // MARK: - RAW Shutter Count Checker Implementation
+    
+    public static func loadRawImageMetadata(filePath: String, sizeBytes: UInt64) -> RawImageEntry {
+        let filename = URL(fileURLWithPath: filePath).lastPathComponent
+        let url = URL(fileURLWithPath: filePath)
+        
+        let options: [CFString: Any] = [
+            kCGImageSourceShouldCache: false
+        ]
+        
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, options as CFDictionary) else {
+            return RawImageEntry(filename: filename, path: filePath, sizeBytes: sizeBytes, cameraModel: "Unknown", shutterCount: nil, dateTaken: nil)
+        }
+        
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] else {
+            return RawImageEntry(filename: filename, path: filePath, sizeBytes: sizeBytes, cameraModel: "Unknown", shutterCount: nil, dateTaken: nil)
+        }
+        
+        var cameraModel = "Unknown"
+        if let tiffDict = properties[kCGImagePropertyTIFFDictionary] as? [CFString: Any] {
+            let make = tiffDict[kCGImagePropertyTIFFMake] as? String ?? ""
+            let model = tiffDict[kCGImagePropertyTIFFModel] as? String ?? ""
+            cameraModel = make.isEmpty ? model : "\(make) \(model)"
+        }
+        
+        var dateTaken: Date? = nil
+        if let exifDict = properties[kCGImagePropertyExifDictionary] as? [CFString: Any] {
+            if let dateString = exifDict[kCGImagePropertyExifDateTimeOriginal] as? String {
+                let df = DateFormatter()
+                df.dateFormat = "yyyy:MM:dd HH:mm:ss"
+                dateTaken = df.date(from: dateString)
+            }
+        }
+        
+        var shutterCount: Int? = nil
+        let cameraModelLower = cameraModel.lowercased()
+        
+        if cameraModelLower.contains("nikon") {
+            if let nikonDict = properties[kCGImagePropertyMakerNikonDictionary] as? [AnyHashable: Any] {
+                if let count = nikonDict[167] as? Int {
+                    shutterCount = count
+                } else if let count = nikonDict["167"] as? Int {
+                    shutterCount = count
+                } else if let count = nikonDict["ImageNumber"] as? Int {
+                    shutterCount = count
+                } else if let count = nikonDict[167] as? String, let countInt = Int(count) {
+                    shutterCount = countInt
+                } else if let count = nikonDict["167"] as? String, let countInt = Int(count) {
+                    shutterCount = countInt
+                } else if let count = nikonDict["ImageNumber"] as? String, let countInt = Int(count) {
+                    shutterCount = countInt
+                }
+            }
+        } else if cameraModelLower.contains("sony") {
+            if let exifDict = properties[kCGImagePropertyExifDictionary] as? [CFString: Any],
+               let makerNoteData = exifDict[kCGImagePropertyExifMakerNote] as? Data {
+                shutterCount = parseSonyShutterCount(fromMakerNote: makerNoteData, cameraModel: cameraModel)
+            }
+        } else if cameraModelLower.contains("fuji") {
+            if let fujiDict = properties[kCGImagePropertyMakerFujiDictionary] as? [AnyHashable: Any] {
+                if let count = fujiDict["ImageCount"] as? Int {
+                    shutterCount = count
+                } else if let count = fujiDict[1430] as? Int {
+                    shutterCount = count
+                } else if let count = fujiDict["1430"] as? Int {
+                    shutterCount = count
+                } else if let count = fujiDict[1430] as? String, let countInt = Int(count) {
+                    shutterCount = countInt
+                } else if let count = fujiDict["1430"] as? String, let countInt = Int(count) {
+                    shutterCount = countInt
+                }
+            }
+        }
+        
+        return RawImageEntry(filename: filename, path: filePath, sizeBytes: sizeBytes, cameraModel: cameraModel, shutterCount: shutterCount, dateTaken: dateTaken)
+    }
+    
+    private static func parseSonyShutterCount(fromMakerNote data: Data, cameraModel: String) -> Int? {
+        guard data.count > 20 else { return nil }
+        
+        var startOffset = 0
+        if data.count >= 4, data.subdata(in: 0..<4) == Data([0x53, 0x4f, 0x4e, 0x59]) { // "SONY"
+            startOffset = 12
+        }
+        
+        guard data.count >= startOffset + 2 else { return nil }
+        let entryCount = Int(data.readUInt16(at: startOffset))
+        
+        var offset = startOffset + 2
+        for _ in 0..<entryCount {
+            guard data.count >= offset + 12 else { break }
+            let tag = data.readUInt16(at: offset)
+            if tag == 0x9050 {
+                let type = data.readUInt16(at: offset + 2)
+                let count = Int(data.readUInt32(at: offset + 4))
+                let valOffset = Int(data.readUInt32(at: offset + 8))
+                
+                let size = count * getTypeSize(type)
+                var tagData: Data
+                if size <= 4 {
+                    tagData = data.subdata(in: (offset + 8)..<(offset + 8 + size))
+                } else {
+                    guard data.count >= valOffset + size else { break }
+                    tagData = data.subdata(in: valOffset..<(valOffset + size))
+                }
+                
+                return decryptSonyShutterCount(fromBlock: tagData, cameraModel: cameraModel)
+            }
+            offset += 12
+        }
+        return nil
+    }
+    
+    private static func getTypeSize(_ type: UInt16) -> Int {
+        switch type {
+        case 1: return 1 // BYTE
+        case 2: return 1 // ASCII
+        case 3: return 2 // SHORT
+        case 4: return 4 // LONG
+        case 5: return 8 // RATIONAL
+        case 7: return 1 // UNDEFINED
+        case 9: return 4 // SLONG
+        case 10: return 8 // SRATIONAL
+        default: return 1
+        }
+    }
+    
+    private static func decryptSonyShutterCount(fromBlock block: Data, cameraModel: String) -> Int? {
+        guard block.count >= 60 else { return nil }
+        
+        var decryptionTable = [UInt8](repeating: 0, count: 256)
+        for b in 0..<249 {
+            let c = (b * b * b) % 249
+            decryptionTable[c] = UInt8(b)
+        }
+        for b in 249...255 {
+            decryptionTable[b] = UInt8(b)
+        }
+        
+        var decryptedBytes = [UInt8](repeating: 0, count: block.count)
+        for i in 0..<block.count {
+            decryptedBytes[i] = decryptionTable[Int(block[i])]
+        }
+        
+        let modelLower = cameraModel.lowercased()
+        var offset = 0x3a
+        
+        if modelLower.contains("ilce-7rm5") || modelLower.contains("ilce-6700") || modelLower.contains("ilce-7cr") || modelLower.contains("ilce-7cm2") {
+            offset = 0x0a
+        } else if modelLower.contains("ilce-7m2") || modelLower.contains("ilce-7r2") || modelLower.contains("ilce-7s2") || modelLower.contains("ilce-6000") || modelLower.contains("ilce-6300") || modelLower.contains("ilce-6500") || modelLower.contains("ilce-7r") || modelLower.contains("ilce-7s") || modelLower.contains("ilce-7") {
+            offset = 0x32
+        }
+        
+        guard decryptedBytes.count >= offset + 4 else { return nil }
+        
+        let b0 = Int(decryptedBytes[offset])
+        let b1 = Int(decryptedBytes[offset + 1])
+        let b2 = Int(decryptedBytes[offset + 2])
+        let b3 = Int(decryptedBytes[offset + 3])
+        let count = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)
+        
+        if count > 0 && count < 2_000_000 {
+            return count
+        }
+        
+        let alternatives = [0x3a, 0x32, 0x0a].filter { $0 != offset }
+        for altOffset in alternatives {
+            if decryptedBytes.count >= altOffset + 4 {
+                let ab0 = Int(decryptedBytes[altOffset])
+                let ab1 = Int(decryptedBytes[altOffset + 1])
+                let ab2 = Int(decryptedBytes[altOffset + 2])
+                let ab3 = Int(decryptedBytes[altOffset + 3])
+                let altCount = ab0 | (ab1 << 8) | (ab2 << 16) | (ab3 << 24)
+                if altCount > 0 && altCount < 2_000_000 {
+                    return altCount
+                }
+            }
+        }
+        
+        return nil
+    }
+}
+
+// MARK: - Binary Data Reading Extensions
+extension Data {
+    func readUInt16(at offset: Int) -> UInt16 {
+        guard offset + 2 <= count else { return 0 }
+        return subdata(in: offset..<(offset + 2)).withUnsafeBytes { $0.load(as: UInt16.self) }
+    }
+    
+    func readUInt32(at offset: Int) -> UInt32 {
+        guard offset + 4 <= count else { return 0 }
+        return subdata(in: offset..<(offset + 4)).withUnsafeBytes { $0.load(as: UInt32.self) }
     }
 }
