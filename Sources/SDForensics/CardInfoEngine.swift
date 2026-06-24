@@ -648,6 +648,9 @@ public class CardInfoEngine {
                let makerNoteData = exifDict[kCGImagePropertyExifMakerNote] as? Data {
                 shutterCount = parseSonyShutterCount(fromMakerNote: makerNoteData, cameraModel: cameraModel)
             }
+            if shutterCount == nil {
+                shutterCount = parseSonyShutterCountFromFile(filePath: filePath, cameraModel: cameraModel)
+            }
         } else if cameraModelLower.contains("fuji") {
             if let fujiDict = properties[kCGImagePropertyMakerFujiDictionary] as? [AnyHashable: Any] {
                 if let count = fujiDict["ImageCount"] as? Int {
@@ -665,6 +668,77 @@ public class CardInfoEngine {
         }
         
         return RawImageEntry(filename: filename, path: filePath, sizeBytes: sizeBytes, cameraModel: cameraModel, shutterCount: shutterCount, dateTaken: dateTaken)
+    }
+    
+    private static func parseSonyShutterCountFromFile(filePath: String, cameraModel: String) -> Int? {
+        guard let file = FileHandle(forReadingAtPath: filePath) else { return nil }
+        defer { file.closeFile() }
+        
+        guard let data = try? file.read(upToCount: 120000) else { return nil }
+        
+        let signature = Data([0x53, 0x4f, 0x4e, 0x59, 0x20, 0x44, 0x53, 0x43, 0x20, 0x00, 0x00, 0x00])
+        var signatureOffset: Int? = nil
+        
+        for i in 0..<(data.count - 12) {
+            if data.subdata(in: i..<(i+12)) == signature {
+                signatureOffset = i
+                break
+            }
+        }
+        
+        if signatureOffset == nil {
+            let backupSig = Data([0x53, 0x4f, 0x4e, 0x59])
+            for i in 0..<(data.count - 12) {
+                if data.subdata(in: i..<(i+4)) == backupSig {
+                    let count = data.readUInt16(at: i + 12)
+                    if count > 0 && count < 500 {
+                        signatureOffset = i
+                        break
+                    }
+                }
+            }
+        }
+        
+        guard let start = signatureOffset else { return nil }
+        
+        let dirStart = start + 12
+        guard data.count >= dirStart + 2 else { return nil }
+        
+        let entryCount = Int(data.readUInt16(at: dirStart))
+        var offset = dirStart + 2
+        
+        for _ in 0..<entryCount {
+            guard data.count >= offset + 12 else { break }
+            let tag = data.readUInt16(at: offset)
+            if tag == 0x9050 {
+                let type = data.readUInt16(at: offset + 2)
+                let count = Int(data.readUInt32(at: offset + 4))
+                let valOffset = Int(data.readUInt32(at: offset + 8))
+                
+                let size = count * getTypeSize(type)
+                var tagData = Data()
+                if size <= 4 {
+                    tagData = data.subdata(in: (offset + 8)..<(offset + 8 + size))
+                } else {
+                    if valOffset + size <= data.count {
+                        tagData = data.subdata(in: valOffset..<(valOffset + size))
+                    } else {
+                        if (try? file.seek(toOffset: UInt64(valOffset))) != nil {
+                            if let fd = try? file.read(upToCount: size) {
+                                tagData = fd
+                            }
+                        }
+                    }
+                }
+                
+                if tagData.count >= 60 {
+                    return decryptSonyShutterCount(fromBlock: tagData, cameraModel: cameraModel)
+                }
+                break
+            }
+            offset += 12
+        }
+        return nil
     }
     
     private static func parseSonyShutterCount(fromMakerNote data: Data, cameraModel: String) -> Int? {
